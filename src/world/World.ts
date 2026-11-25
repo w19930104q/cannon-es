@@ -407,6 +407,39 @@ export class World extends EventTarget {
   }
 
   /**
+   * Apply every transform staged with `body.stagePosition()` /
+   * `body.stageQuaternion()` and refresh the spatial index in one atomic step.
+   *
+   * Before this call, the live body transforms and all spatial queries
+   * (raycasts, {@link Broadphase.aabbQuery} overlap queries, broadphase pair
+   * generation) keep seeing the previous, committed snapshot. After this call,
+   * body positions/orientations, their AABBs and the broadphase index all
+   * describe the new transforms, so every query resolves against the new
+   * positions. Bodies without staged transforms are left untouched.
+   *
+   * This is the intended way to teleport a body: stage the destination and
+   * commit, instead of mutating `body.position` directly while the broadphase
+   * still caches the old location.
+   */
+  commit(): void {
+    const bodies = this.bodies
+    let anyChanged = false
+
+    for (let i = 0; i !== bodies.length; i++) {
+      if (bodies[i].applyStagedTransform()) {
+        anyChanged = true
+      }
+    }
+
+    if (anyChanged) {
+      // Force broadphase indices (e.g. the SAP axis list) to rebuild from the
+      // committed transforms. AABBs themselves are rebuilt lazily from
+      // body.aabbNeedsUpdate on the next query / collision pair generation.
+      this.broadphase.dirty = true
+    }
+  }
+
+  /**
    * @todo Make a faster map
    */
   getShapeById(id: number): Shape | null {

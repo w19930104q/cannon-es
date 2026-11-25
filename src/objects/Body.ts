@@ -320,6 +320,20 @@ export class Body extends EventTarget {
   aabbNeedsUpdate: boolean
 
   /**
+   * Position staged by {@link Body.stagePosition}, waiting for {@link World.commit}.
+   * Until the commit is applied, {@link Body.position} and every spatial query
+   * (raycasts, AABB overlap queries, broadphase) keep seeing the old snapshot.
+   * When `null`, no position change is pending.
+   */
+  stagedPosition: Vec3 | null
+
+  /**
+   * Orientation staged by {@link Body.stageQuaternion}, waiting for {@link World.commit}.
+   * When `null`, no orientation change is pending.
+   */
+  stagedQuaternion: Quaternion | null
+
+  /**
    * Total bounding radius of the Body including its shapes, relative to body.position.
    */
   boundingRadius: number
@@ -525,6 +539,8 @@ export class Body extends EventTarget {
 
     this.aabb = new AABB()
     this.aabbNeedsUpdate = true
+    this.stagedPosition = null
+    this.stagedQuaternion = null
     this.boundingRadius = 0
     this.wlambda = new Vec3()
     this.isTrigger = Boolean(options.isTrigger)
@@ -739,6 +755,81 @@ export class Body extends EventTarget {
     }
 
     this.aabbNeedsUpdate = false
+  }
+
+  /**
+   * Stage a new world space position. The body is not moved immediately:
+   * {@link Body.position} and spatial queries (raycasts, AABB overlap queries,
+   * broadphase) keep seeing the old snapshot until {@link World.commit} is called.
+   * At commit time the position and the spatial index are updated together.
+   * Calling this several times before a commit keeps the latest staged position.
+   * @param position The position to move to on the next commit.
+   * @return The body object, for chainability.
+   */
+  stagePosition(position: Vec3): Body {
+    if (this.stagedPosition === null) {
+      this.stagedPosition = new Vec3()
+    }
+    this.stagedPosition.copy(position)
+    return this
+  }
+
+  /**
+   * Stage a new world space orientation. Like {@link Body.stagePosition}, the
+   * change is only visible after the next {@link World.commit}.
+   * @param quaternion The orientation to assume on the next commit.
+   * @return The body object, for chainability.
+   */
+  stageQuaternion(quaternion: Quaternion): Body {
+    if (this.stagedQuaternion === null) {
+      this.stagedQuaternion = new Quaternion()
+    }
+    this.stagedQuaternion.copy(quaternion)
+    return this
+  }
+
+  /**
+   * Whether this body has a staged position or orientation waiting for commit.
+   */
+  hasStagedTransform(): boolean {
+    return this.stagedPosition !== null || this.stagedQuaternion !== null
+  }
+
+  /**
+   * Apply the staged transform, if any. Called by {@link World.commit}.
+   * The live position/quaternion and the AABB dirty flag are updated in one
+   * go so that every spatial query sees the new transform afterwards.
+   * @return True if a staged transform was applied.
+   */
+  applyStagedTransform(): boolean {
+    const stagedPosition = this.stagedPosition
+    const stagedQuaternion = this.stagedQuaternion
+
+    if (stagedPosition === null && stagedQuaternion === null) {
+      return false
+    }
+
+    if (stagedPosition !== null) {
+      this.position.copy(stagedPosition)
+      // A teleport is instantaneous: the body was never between the old and
+      // the new position, so reset the interpolation frames as well to avoid
+      // rendering a sweep across the gap on the next interpolated step.
+      this.previousPosition.copy(stagedPosition)
+      this.interpolatedPosition.copy(stagedPosition)
+      this.stagedPosition = null
+    }
+
+    if (stagedQuaternion !== null) {
+      this.quaternion.copy(stagedQuaternion)
+      this.previousQuaternion.copy(stagedQuaternion)
+      this.interpolatedQuaternion.copy(stagedQuaternion)
+      this.stagedQuaternion = null
+    }
+
+    // The cached AABB and any broadphase index now describe the old transform.
+    this.aabbNeedsUpdate = true
+
+    return true
   }
 
   /**
