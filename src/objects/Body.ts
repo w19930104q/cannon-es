@@ -683,6 +683,82 @@ export class Body extends EventTarget {
   }
 
   /**
+   * Replace a shape on the body with another shape.
+   * Mass, inertia, and AABB are updated atomically.
+   * If the new shape is invalid, the old shape is kept unchanged.
+   * @param oldShape The shape to replace.
+   * @param newShape The replacement shape. If null/undefined, the operation is aborted.
+   * @param offset Optional local offset for the new shape. Defaults to the old shape's offset.
+   * @param orientation Optional local orientation for the new shape. Defaults to the old shape's orientation.
+   * @return The body object, for chainability.
+   */
+  replaceShape(oldShape: Shape, newShape: Shape, _offset?: Vec3, _orientation?: Quaternion): Body {
+    if (!newShape) {
+      return this
+    }
+
+    const index = this.shapes.indexOf(oldShape)
+
+    if (index === -1) {
+      console.warn('Shape does not belong to the body')
+      return this
+    }
+
+    const offset = _offset ? _offset : this.shapeOffsets[index]
+    const orientation = _orientation ? _orientation : this.shapeOrientations[index]
+
+    oldShape.body = null
+    this.shapes[index] = newShape
+    this.shapeOffsets[index] = offset
+    this.shapeOrientations[index] = orientation
+    newShape.body = this
+
+    this.updateMassProperties()
+    this.updateBoundingRadius()
+    this.aabbNeedsUpdate = true
+
+    return this
+  }
+
+  /**
+   * Replace a shape on the body with another shape.
+   * Mass, inertia, and AABB are updated atomically.
+   * If the new shape is invalid, the old shape is kept unchanged.
+   * @param oldShape The shape to replace.
+   * @param newShape The replacement shape. If null/undefined, the operation is aborted.
+   * @param offset Optional local offset for the new shape. Defaults to the old shape's offset.
+   * @param orientation Optional local orientation for the new shape. Defaults to the old shape's orientation.
+   * @return The body object, for chainability.
+   */
+  replaceShape(oldShape: Shape, newShape: Shape, _offset?: Vec3, _orientation?: Quaternion): Body {
+    if (!newShape) {
+      return this
+    }
+
+    const index = this.shapes.indexOf(oldShape)
+
+    if (index === -1) {
+      console.warn('Shape does not belong to the body')
+      return this
+    }
+
+    const offset = _offset ? _offset : this.shapeOffsets[index]
+    const orientation = _orientation ? _orientation : this.shapeOrientations[index]
+
+    oldShape.body = null
+    this.shapes[index] = newShape
+    this.shapeOffsets[index] = offset
+    this.shapeOrientations[index] = orientation
+    newShape.body = this
+
+    this.updateMassProperties()
+    this.updateBoundingRadius()
+    this.aabbNeedsUpdate = true
+
+    return this
+  }
+
+  /**
    * Update the bounding radius of the body. Should be done if any of the shapes are changed.
    */
   updateBoundingRadius(): void {
@@ -893,20 +969,34 @@ export class Body extends EventTarget {
    * Should be called whenever you change the body shape or mass.
    */
   updateMassProperties(): void {
-    const halfExtents = Body_updateMassProperties_halfExtents
-
     this.invMass = this.mass > 0 ? 1.0 / this.mass : 0
     const I = this.inertia
     const fixed = this.fixedRotation
 
-    // Approximate with AABB box
-    this.updateAABB()
-    halfExtents.set(
-      (this.aabb.upperBound.x - this.aabb.lowerBound.x) / 2,
-      (this.aabb.upperBound.y - this.aabb.lowerBound.y) / 2,
-      (this.aabb.upperBound.z - this.aabb.lowerBound.z) / 2
-    )
-    Box.calculateInertia(halfExtents, this.mass, I)
+    I.set(0, 0, 0)
+
+    const N = this.shapes.length
+    if (N === 0) {
+      this.invInertia.set(0, 0, 0)
+      this.updateInertiaWorld(true)
+      return
+    }
+
+    const shapeInertia = Body_updateMassProperties_shapeInertia
+    const shapeMass = this.mass / N
+
+    for (let i = 0; i !== N; i++) {
+      const shape = this.shapes[i]
+      shape.calculateLocalInertia(shapeMass, shapeInertia)
+      const o = this.shapeOffsets[i]
+
+      // Parallel axis theorem: I_displaced = I_cm + m * (|d|^2 * I - d*d^T)
+      const d2 = o.x * o.x + o.y * o.y + o.z * o.z
+
+      I.x += shapeInertia.x + shapeMass * (d2 - o.x * o.x)
+      I.y += shapeInertia.y + shapeMass * (d2 - o.y * o.y)
+      I.z += shapeInertia.z + shapeMass * (d2 - o.z * o.z)
+    }
 
     this.invInertia.set(
       I.x > 0 && !fixed ? 1.0 / I.x : 0,
