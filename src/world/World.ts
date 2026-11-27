@@ -93,6 +93,17 @@ export class World extends EventTarget {
   broadphase: Broadphase
 
   /**
+   * Replace the current broadphase with a new one.
+   * Handles cleanup of the old broadphase and initialization of the new one.
+   * Call this instead of directly assigning to `world.broadphase`.
+   */
+  setBroadphase(broadphase: Broadphase): void {
+    this.broadphase.setWorld(null)
+    this.broadphase = broadphase
+    this.broadphase.setWorld(this)
+  }
+
+  /**
    * All bodies in this world
    */
   bodies: Body[]

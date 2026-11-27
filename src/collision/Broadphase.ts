@@ -144,7 +144,7 @@ export class Broadphase {
   /**
    * To be implemented by subcasses
    */
-  setWorld(world: World): void {}
+  setWorld(world: World | null): void { this.world = world }
 
   /**
    * Check if the bounding spheres of two bodies overlap.

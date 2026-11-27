@@ -31,26 +31,12 @@ export class SAPBroadphase extends Broadphase {
    * Check if the bounds of two bodies overlap, along the given SAP axis.
    */
   static checkBounds(bi: Body, bj: Body, axisIndex: 0 | 1 | 2): boolean {
-    let biPos: number
-    let bjPos: number
-
     if (axisIndex === 0) {
-      biPos = bi.position.x
-      bjPos = bj.position.x
+      return bj.aabb.lowerBound.x < bi.aabb.upperBound.x
     } else if (axisIndex === 1) {
-      biPos = bi.position.y
-      bjPos = bj.position.y
-    } else if (axisIndex === 2) {
-      biPos = bi.position.z
-      bjPos = bj.position.z
+      return bj.aabb.lowerBound.y < bi.aabb.upperBound.y
     }
-
-    const ri = bi.boundingRadius,
-      rj = bj.boundingRadius,
-      boundA2 = biPos! + ri,
-      boundB1 = bjPos! - rj
-
-    return boundB1 < boundA2
+    return bj.aabb.lowerBound.z < bi.aabb.upperBound.z
   }
 
   // Note: these are identical, save for x/y/z lowerbound
@@ -136,22 +122,26 @@ export class SAPBroadphase extends Broadphase {
   /**
    * Change the world
    */
-  setWorld(world: World): void {
+  setWorld(world: World | null): void {
+    // Remove old handlers from previous world, if any
+    if (this.world) {
+      this.world.removeEventListener('addBody', this._addBodyHandler)
+      this.world.removeEventListener('removeBody', this._removeBodyHandler)
+    }
+
     // Clear the old axis array
     this.axisList.length = 0
 
-    // Add all bodies from the new world
-    for (let i = 0; i < world.bodies.length; i++) {
-      this.axisList.push(world.bodies[i])
+    if (world) {
+      // Add all bodies from the new world
+      for (let i = 0; i < world.bodies.length; i++) {
+        this.axisList.push(world.bodies[i])
+      }
+
+      // Add handlers to update the list of bodies.
+      world.addEventListener('addBody', this._addBodyHandler)
+      world.addEventListener('removeBody', this._removeBodyHandler)
     }
-
-    // Remove old handlers, if any
-    world.removeEventListener('addBody', this._addBodyHandler)
-    world.removeEventListener('removeBody', this._removeBodyHandler)
-
-    // Add handlers to update the list of bodies.
-    world.addEventListener('addBody', this._addBodyHandler)
-    world.addEventListener('removeBody', this._removeBodyHandler)
 
     this.world = world
     this.dirty = true
