@@ -131,6 +131,19 @@ export class World extends EventTarget {
    * Used to look up a ContactMaterial given two instances of Material.
    */
   contactMaterialTable: TupleDictionary
+
+  /** @internal Materials with pending property changes. */
+  _pendingMaterials: Set<Material> = new Set()
+
+  /** @internal ContactMaterials with pending property changes. */
+  _pendingContactMaterials: Set<ContactMaterial> = new Set()
+
+  /** @internal ContactMaterials queued for addition at next step boundary. */
+  _pendingAddContactMaterials: ContactMaterial[] = []
+
+  /** @internal ContactMaterials queued for removal at next step boundary. */
+  _pendingRemoveContactMaterials: ContactMaterial[] = []
+
   /**
    * The default material of the bodies.
    */
@@ -366,6 +379,9 @@ export class World extends EventTarget {
     body.index = this.bodies.length
     this.bodies.push(body)
     body.world = this
+    if (body.material) {
+      Material._worldRegistry.set(body.material, this)
+    }
     body.initPosition.copy(body.position)
     body.initVelocity.copy(body.velocity)
     body.timeLastSleepy = this.time
@@ -428,24 +444,113 @@ export class World extends EventTarget {
    * Adds a contact material to the World
    */
   addContactMaterial(cmat: ContactMaterial): void {
-    // Add contact material
-    this.contactmaterials.push(cmat)
-
-    // Add current contact material to the material table
-    this.contactMaterialTable.set(cmat.materials[0].id, cmat.materials[1].id, cmat)
+    ContactMaterial._worldRegistry.set(cmat, this)
+    this._pendingAddContactMaterials.push(cmat)
   }
 
   /**
    * Removes a contact material from the World.
    */
   removeContactMaterial(cmat: ContactMaterial): void {
-    const idx = this.contactmaterials.indexOf(cmat)
-    if (idx === -1) {
-      return
+    this._pendingRemoveContactMaterials.push(cmat)
+  }
+
+  /**
+   * @internal Register a Material whose pending property changes must be committed.
+   */
+  _registerPendingMaterial(m: Material): void {
+    this._pendingMaterials.add(m)
+  }
+
+  /**
+   * @internal Register a ContactMaterial whose pending property changes must be committed.
+   */
+  _registerPendingContactMaterial(cm: ContactMaterial): void {
+    this._pendingContactMaterials.add(cm)
+  }
+
+  /**
+   * @internal Atomically commit all pending material/contact-material changes.
+   * Called at the start of internalStep. Returns false if any validation fails
+   * (in which case all pending changes are rolled back).
+   */
+  _commitPendingChanges(): boolean {
+    const pendingRemoveIds = new Set<number>()
+    for (const cm of this._pendingRemoveContactMaterials) {
+      pendingRemoveIds.add(cm.id)
     }
 
-    this.contactmaterials.splice(idx, 1)
-    this.contactMaterialTable.delete(cmat.materials[0].id, cmat.materials[1].id)
+    // Phase 1: Validate all pending changes without applying
+    for (const m of this._pendingMaterials) {
+      if (m._hasPendingChanges() && !m._validate()) {
+        this._rollbackPendingChanges()
+        return false
+      }
+    }
+
+    for (const cm of this._pendingContactMaterials) {
+      if (pendingRemoveIds.has(cm.id)) {
+        continue
+      }
+      if (cm._hasPendingChanges() && !cm._validate()) {
+        this._rollbackPendingChanges()
+        return false
+      }
+    }
+
+    // Phase 2: All valid - apply changes atomically
+    for (const m of this._pendingMaterials) {
+      if (m._hasPendingChanges()) {
+        m._commit()
+      }
+    }
+
+    for (const cm of this._pendingContactMaterials) {
+      if (pendingRemoveIds.has(cm.id)) {
+        cm._rollback()
+      } else if (cm._hasPendingChanges()) {
+        cm._commit()
+      }
+    }
+
+    // Process pending removals
+    for (const cm of this._pendingRemoveContactMaterials) {
+      const idx = this.contactmaterials.indexOf(cm)
+      if (idx !== -1) {
+        this.contactmaterials.splice(idx, 1)
+      }
+      this.contactMaterialTable.delete(cm.materials[0].id, cm.materials[1].id)
+    }
+
+    // Process pending additions
+    for (const cm of this._pendingAddContactMaterials) {
+      ContactMaterial._worldRegistry.set(cm, this)
+      this.contactmaterials.push(cm)
+      this.contactMaterialTable.set(cm.materials[0].id, cm.materials[1].id, cm)
+    }
+
+    this._pendingMaterials.clear()
+    this._pendingContactMaterials.clear()
+    this._pendingAddContactMaterials.length = 0
+    this._pendingRemoveContactMaterials.length = 0
+
+    return true
+  }
+
+  /**
+   * @internal Discard all pending changes without applying them.
+   */
+  _rollbackPendingChanges(): void {
+    for (const m of this._pendingMaterials) {
+      m._rollback()
+    }
+    for (const cm of this._pendingContactMaterials) {
+      cm._rollback()
+    }
+    this._pendingMaterials.clear()
+    this._pendingContactMaterials.clear()
+    this._pendingAddContactMaterials.length = 0
+    this._pendingRemoveContactMaterials.length = 0
   }
 
   /**
@@ -526,6 +631,10 @@ export class World extends EventTarget {
 
   internalStep(dt: number): void {
     this.dt = dt
+
+    // Commit all pending material/contact-material changes atomically
+    // before any collision detection or solving.
+    this._commitPendingChanges()
 
     const world = this
     const that = this

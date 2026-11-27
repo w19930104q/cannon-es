@@ -235,6 +235,9 @@ describe('World', () => {
     world.addContactMaterial(cmat1)
     world.addContactMaterial(cmat2)
 
+    // Changes are buffered; commit them
+    world._commitPendingChanges()
+
     expect(world.getContactMaterial(m1, m2)).toBe(cmat1)
     expect(world.getContactMaterial(m1, m3)).toBe(cmat2)
   })
@@ -243,11 +246,13 @@ describe('World', () => {
     const world = new World()
     const m1 = new Material('m1')
     const m2 = new Material('m2')
-    const m3 = new Material('m3')
     const cmat1 = new ContactMaterial(m1, m2, { friction: 0.5 })
 
     world.addContactMaterial(cmat1)
+    world._commitPendingChanges()
+
     world.removeContactMaterial(cmat1)
+    world._commitPendingChanges()
 
     expect(world.getContactMaterial(m1, m2)).toBe(undefined)
   })
