@@ -786,6 +786,51 @@ export class World extends EventTarget {
       }
     }
 
+    // Propagate wake-up through active constraint chains.
+    // When a body is awoken (e.g. by an impact), all bodies
+    // reachable via enabled constraints must also wake up.
+    // Disabled / fully-inactive constraints stop propagation.
+    if (this.allowSleep) {
+      const wakeQueue: Body[] = []
+      for (i = 0; i !== N; i++) {
+        const bi = bodies[i]
+        if (bi.sleepState === Body.AWAKE && bi.type === Body.DYNAMIC) {
+          wakeQueue.push(bi)
+        }
+      }
+      while (wakeQueue.length > 0) {
+        const current = wakeQueue.pop()!
+        for (let j = 0; j !== constraints.length; j++) {
+          const c = constraints[j]
+          let constraintActive = false
+          for (let k = 0; k < c.equations.length; k++) {
+            if (c.equations[k].enabled) {
+              constraintActive = true
+              break
+            }
+          }
+          if (!constraintActive) continue
+
+          let otherBody: Body | null = null
+          if (c.bodyA === current) {
+            otherBody = c.bodyB
+          } else if (c.bodyB === current) {
+            otherBody = c.bodyA
+          }
+
+          if (
+            otherBody &&
+            otherBody.type === Body.DYNAMIC &&
+            otherBody.sleepState === Body.SLEEPING &&
+            otherBody.allowSleep
+          ) {
+            otherBody.wakeUp()
+            wakeQueue.push(otherBody)
+          }
+        }
+      }
+    }
+
     // Add user-added constraints
     Nconstraints = constraints.length
     for (i = 0; i !== Nconstraints; i++) {
